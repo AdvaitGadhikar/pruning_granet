@@ -8,16 +8,18 @@ import numpy as np
 from sparsify import *
 from models import *
 
-def train(model, optimizer, train_loader, epoch, mask=None, criterion, prune_iter):
+def train(model, optimizer, train_loader, epoch, criterion, prune_iter, num_epochs, si, sf, growth_ratio, mask=None):
     model.train()
 
-    if epoch % prune_iter == 0:
-        prune_ratio = get_pruning_ratio(args.num_epochs, epoch, args.si, args.sf, prune_iter)
-        model, mask = global_prune(model, prune_ratio)
+    if epoch % prune_iter == prune_iter - 1:
+        prune_ratio = get_pruning_ratio(num_epochs, epoch, si, sf, prune_iter)
+        print('Pruning Model', prune_ratio)
+        model, mask = global_prune(model, prune_ratio, growth_ratio)
 
     epoch_loss = 0
     cnt = 0
     for i, (data, labels) in enumerate(train_loader):
+        data = data.view(data.shape[0], -1)
         optimizer.zero_grad()
         output = model(data)
         loss = criterion(output, labels)
@@ -27,7 +29,7 @@ def train(model, optimizer, train_loader, epoch, mask=None, criterion, prune_ite
         cnt += 1
         epoch_loss += loss
 
-        if i % 10 == 0:
+        if i % 100 == 0:
             preds = torch.argmax(output, dim=1)
             train_acc = (preds == labels).sum() / output.shape[0]
             print('Epoch: %.4f, Train Loss: %.4f, Train Accuracy: %.4f' %(epoch, loss, train_acc))
@@ -36,12 +38,14 @@ def train(model, optimizer, train_loader, epoch, mask=None, criterion, prune_ite
     
     return model, mask
 
-def evaluate(model, val_loader, mask=None, criterion):
+def evaluate(model, val_loader, criterion, mask=None):
+
     model.eval()
     val_acc = 0
     val_loss = 0
     cnt = 0
     for i, (data, labels) in enumerate(val_loader):
+        data = data.view(data.shape[0], -1)
         output = model(data)
         loss = criterion(output, labels)
         preds = torch.argmax(output, dim=1)
@@ -71,13 +75,14 @@ def main():
                         help='initial sparsity')
     parser.add_argument('--sf', type=int, default=0.9, metavar='N',
                         help='number of epochs to train (default: 100)')
-    parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                         help='learning rate (default: 0.1)')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                         help='SGD momentum (default: 0.9)')
     parser.add_argument('--growth_ratio', type=float, default=0.1, metavar='M',
                         help='growth ratio')
 
+    args = parser.parse_args()
     model = fc_model(784, 256, 10)
     
     train_data = torchvision.datasets.MNIST('data/', download = True, train = True, transform=torchvision.transforms.ToTensor())
@@ -91,16 +96,16 @@ def main():
                                           shuffle=True)
 
     criterion = nn.CrossEntropyLoss()
-
     num_epochs = args.num_epochs
     optimizer = optim.SGD(model.parameters(), lr = args.lr, momentum = args.momentum)
 
     for epoch in range(num_epochs):
         
-        model, mask = train(model, optimizer, train_loader, epoch, criterion, args.prune_every)      
-        val_loss, val_acc = evaluate(model, val_loader, mask, criterion)
+        model, mask = train(model, optimizer, train_loader, epoch, criterion, args.prune_every, args.num_epochs, args.si, args.sf, args.growth_ratio)      
+        val_loss, val_acc = evaluate(model, val_loader, criterion, mask)
         print('Epoch: %.4f, Val Loss: %.4f, Val Accuracy: %.4f' %(epoch, val_loss, val_acc))
 
 
-    
+if __name__ == '__main__':
+   main()    
 
